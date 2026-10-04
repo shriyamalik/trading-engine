@@ -104,11 +104,25 @@ class OrderBook:
 
         return self.asks[best_ask_price][0]
 
+    def contains_order(self, order: Order) -> bool:
+        book_side = self.bids if order.side == OrderSide.BUY else self.asks
+
+        if order.price not in book_side:
+            return False
+
+        return order in book_side[order.price]
+
+
     def remove_order(self, order: Order):
-        book = self.bids if order.side == OrderSide.BUY else self.asks
+        book_side = self.bids if order.side == OrderSide.BUY else self.asks
 
-        orders_at_price = book.get(order.price)
-        orders_at_price.remove(order)
+        if order.price not in book_side:
+            return
 
-        if not orders_at_price:
-            del book[order.price]
+        if order not in book_side[order.price]:
+            return
+
+        book_side[order.price].remove(order)
+
+        if not book_side[order.price]:
+            del book_side[order.price]

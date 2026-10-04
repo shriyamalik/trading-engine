@@ -1,85 +1,66 @@
-# Practice an implementation of an order book 
-# gives information about an order for example bid, size price etc
-
 from decimal import Decimal
 
 from models import Order, OrderSide, OrderType
 from order_book import OrderBook
+from matching_engine import MatchingEngine
+from wallet_manager import WalletManager
 
-
+wallet_manager = WalletManager()
 book = OrderBook("BTCUSDT")
+engine = MatchingEngine(book, wallet_manager)
 
+alice_wallet = wallet_manager.get_wallet("alice")
+bob_wallet = wallet_manager.get_wallet("bob")
+charlie_wallet = wallet_manager.get_wallet("charlie")
 
-# ----------------------
-# BUY ORDERS
-# ----------------------
-
-buy1 = Order(
-    user_id="alice",
-    symbol="BTCUSDT",
-    side=OrderSide.BUY,
-    order_type=OrderType.LIMIT,
-    price=Decimal("29900"),
-    quantity=Decimal("0.3")
-)
-
-buy2 = Order(
-    user_id="bob",
-    symbol="BTCUSDT",
-    side=OrderSide.BUY,
-    order_type=OrderType.LIMIT,
-    price=Decimal("29800"),
-    quantity=Decimal("1.0")
-)
-
-buy3 = Order(
-    user_id="charlie",
-    symbol="BTCUSDT",
-    side=OrderSide.BUY,
-    order_type=OrderType.LIMIT,
-    price=Decimal("29700"),
-    quantity=Decimal("0.5")
-)
-
-
-# ----------------------
-# SELL ORDERS
-# ----------------------
+alice_wallet.deposit("BTC", Decimal("1"))
+bob_wallet.deposit("BTC", Decimal("1"))
+charlie_wallet.deposit("USDT", Decimal("50000"))
 
 sell1 = Order(
-    user_id="david",
+    user_id="alice",
     symbol="BTCUSDT",
     side=OrderSide.SELL,
     order_type=OrderType.LIMIT,
-    price=Decimal("30100"),
+    price=Decimal("30000"),
     quantity=Decimal("0.4")
 )
 
 sell2 = Order(
-    user_id="emma",
+    user_id="bob",
     symbol="BTCUSDT",
     side=OrderSide.SELL,
     order_type=OrderType.LIMIT,
-    price=Decimal("30200"),
+    price=Decimal("30100"),
     quantity=Decimal("0.5")
 )
 
-sell3 = Order(
-    user_id="frank",
-    symbol="BTCUSDT",
-    side=OrderSide.SELL,
-    order_type=OrderType.LIMIT,
-    price=Decimal("30300"),
-    quantity=Decimal("0.8")
-)
 
-
-book.add_order(buy1)
-book.add_order(buy2)
-book.add_order(buy3)
-
-book.add_order(sell1)
-book.add_order(sell2)
-book.add_order(sell3)
+engine.submit_order(sell1)
+engine.submit_order(sell2)
 
 book.print_book()
+
+
+buy = Order(
+    user_id="charlie",
+    symbol="BTCUSDT",
+    side=OrderSide.BUY,
+    order_type=OrderType.LIMIT,
+    price=Decimal("30100"),
+    quantity=Decimal("0.6")
+)
+
+engine.submit_order(buy)
+
+book.print_book()
+
+
+print("\nTRADES")
+
+for trade in engine.trades:
+    print(
+        trade.quantity,
+        "BTC @",
+        trade.price
+    )

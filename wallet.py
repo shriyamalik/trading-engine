@@ -1,0 +1,61 @@
+from dataclasses import dataclass
+from decimal import Decimal
+
+
+@dataclass
+class Balance:
+    available: Decimal = Decimal("0")
+    locked: Decimal = Decimal("0")
+
+
+class Wallet:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.balances: dict[str, Balance] = {}
+
+    def get_balance(self, asset: str) -> Balance:
+        if asset not in self.balances:
+            self.balances[asset] = Balance()
+
+        return self.balances[asset]
+
+    def deposit(self, asset: str, amount: Decimal):
+        if amount <= 0:
+            raise ValueError("Deposit amount must be positive.")
+
+        self.get_balance(asset).available += amount
+
+    def lock(self, asset: str, amount: Decimal):
+        balance = self.get_balance(asset)
+
+        if amount <= 0:
+            raise ValueError("Lock amount must be positive.")
+
+        if balance.available < amount:
+            raise ValueError(f"Insufficient {asset} balance.")
+
+        balance.available -= amount
+        balance.locked += amount
+
+    def unlock(self, asset: str, amount: Decimal):
+        if amount <= 0:
+            raise ValueError("Unlock amount must be positive.")
+
+        balance = self.get_balance(asset)
+
+        if balance.locked < amount:
+            raise ValueError(f"Insufficient locked {asset} balance.")
+
+        balance.locked -= amount
+        balance.available += amount
+
+    def consume_locked(self, asset: str, amount: Decimal):
+        if amount <= 0:
+            raise ValueError("Consume amount must be positive.")
+    
+        balance = self.get_balance(asset)
+
+        if balance.locked < amount:
+            raise ValueError(f"Insufficient locked {asset} balance.")
+
+        balance.locked -= amount

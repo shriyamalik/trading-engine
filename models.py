@@ -41,15 +41,22 @@ class Order:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    @property
-    def validation(self) -> str:
-        if self.order_type == OrderType.LIMIT and self.price is None:
-            return "Limit order must have a price."
-        if self.order_type == OrderType.MARKET and self.price is not None:
-            return "Market order should not have a price."
+
+    def validate(self):
         if self.quantity <= 0:
-            return "Order quantity must be positive."
-        return "Order is valid."
+           raise ValueError("Order quantity must be positive.")
+
+        if self.order_type == OrderType.LIMIT:
+            if self.price is None or self.price <= 0:
+                raise ValueError(
+                    "Limit order must have a positive price."
+                )
+
+        if self.order_type == OrderType.MARKET:
+            if self.price is not None:
+                raise ValueError(
+                    "Market order should not have a price."
+                )
 
     def remaining_quantity(self) -> Decimal:
         return self.quantity - self.filled_quantity
