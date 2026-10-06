@@ -232,25 +232,25 @@ def test_invalid_negative_quantity():
         engine.submit_order(order)
 
 
-def test_market_order_rejected_for_now():
-    wallet_manager, book, engine = setup_exchange()
+# def test_market_order_rejected_for_now():
+#     wallet_manager, book, engine = setup_exchange()
 
-    buyer = wallet_manager.get_wallet("buyer")
-    buyer.deposit("USDT", Decimal("50000"))
+#     buyer = wallet_manager.get_wallet("buyer")
+#     buyer.deposit("USDT", Decimal("50000"))
 
-    order = Order(
-        user_id="buyer",
-        symbol="BTCUSDT",
-        side=OrderSide.BUY,
-        order_type=OrderType.MARKET,
-        quantity=Decimal("1"),
-    )
+#     order = Order(
+#         user_id="buyer",
+#         symbol="BTCUSDT",
+#         side=OrderSide.BUY,
+#         order_type=OrderType.MARKET,
+#         quantity=Decimal("1"),
+#     )
 
-    with pytest.raises(
-        NotImplementedError,
-        match="Market orders are not supported yet",
-    ):
-        engine.submit_order(order)
+#     with pytest.raises(
+#         NotImplementedError,
+#         match="Market orders are not supported yet",
+#     ):
+#         engine.submit_order(order)
 
 def test_multiple_price_levels():
     wallet_manager, book, engine = setup_exchange()
@@ -360,3 +360,300 @@ def test_multiple_price_levels():
     # Total = 18050
 
     assert buyer.get_balance("USDT").available == Decimal("31950")
+
+def test_cancel_buy_order():
+    wallet_manager, book, engine =setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit("USDT", Decimal("50000"))
+
+    buy_order = Order(
+        user_id= "buyer",
+        symbol= "BTCUSDT",
+        side= OrderSide.BUY,
+        order_type= OrderType.LIMIT,
+        price = Decimal("30000"),
+        quantity= Decimal("1"),
+    )
+
+    engine.submit_order(buy_order)
+
+    assert buyer.get_balance("USDT").available == Decimal("20000")
+    assert buyer.get_balance("USDT").locked == Decimal("30000")
+
+    engine.cancel_order(buy_order)
+
+    assert buy_order.status == OrderStatus.CANCELLED
+    assert buyer.get_balance("USDT").available == Decimal("50000")
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+
+    assert not book.contains_order(buy_order)
+
+def test_cancel_partially_filled_buy_order():
+    wallet_manager, book, engine = setup_exchange()
+
+    seller = wallet_manager.get_wallet("seller")
+    seller.deposit("BTC", Decimal("0.4"))
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit("USDT", Decimal("50000"))
+
+    sell_order = Order(
+        user_id="seller",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.4"),
+    )
+
+    buy_order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(sell_order)
+    engine.submit_order(buy_order)
+
+    assert buy_order.remaining_quantity() == Decimal("0.6")
+    assert buyer.get_balance("USDT").locked == Decimal("18000")
+
+    engine.cancel_order(buy_order)
+
+    assert buy_order.status == OrderStatus.CANCELLED
+
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+    assert buyer.get_balance("USDT").available == Decimal("38000")
+    assert buyer.get_balance("BTC").available == Decimal("0.4")
+    
+
+def test_market_buy_partial_fill():
+    wallet_manager, book, engine = setup_exchange()
+
+    seller1 = wallet_manager.get_wallet("seller1")
+    seller2 = wallet_manager.get_wallet("seller2")
+    buyer = wallet_manager.get_wallet("buyer")
+
+    seller1.deposit("BTC", Decimal("0.2"))
+    seller2.deposit("BTC", Decimal("0.4"))
+    buyer.deposit("USDT", Decimal("50000"))
+
+    sell1 = Order(
+        user_id="seller1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.2"),
+    )
+
+    sell2 = Order(
+        user_id="seller2",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30100"),
+        quantity=Decimal("0.4"),
+    )
+
+    engine.submit_order(sell1)
+    engine.submit_order(sell2)
+
+    market_buy = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(market_buy)
+
+    assert market_buy.filled_quantity == Decimal("0.6")
+    assert market_buy.remaining_quantity() == Decimal("0.4")
+
+    assert market_buy.status == OrderStatus.EXPIRED
+
+    assert buyer.get_balance("BTC").available == Decimal("0.6")
+
+    # 0.2 * 30000 = 6000
+    # 0.4 * 30100 = 12040
+    # total = 18040
+
+    assert buyer.get_balance("USDT").available == Decimal("31960")
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+
+    assert len(engine.trades) == 2
+
+    assert engine.trades[0].price == Decimal("30000")
+    assert engine.trades[0].quantity == Decimal("0.2")
+
+    assert engine.trades[1].price == Decimal("30100")
+    assert engine.trades[1].quantity == Decimal("0.4")
+
+    assert book.best_ask() is None
+
+def test_full_market_buy():
+    wallet_manager, book, engine = setup_exchange()
+
+    seller1 = wallet_manager.get_wallet("seller1")
+    seller2 = wallet_manager.get_wallet("seller2")
+    buyer = wallet_manager.get_wallet("buyer")
+
+    seller1.deposit("BTC", Decimal("0.3"))
+    seller2.deposit("BTC", Decimal("0.4"))
+    buyer.deposit("USDT", Decimal("50000"))
+
+    sell1 = Order(
+        user_id="seller1",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.3"),
+    )
+
+    sell2 = Order(
+        user_id="seller2",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30100"),
+        quantity=Decimal("0.4"),
+    )
+
+    engine.submit_order(sell1)
+    engine.submit_order(sell2)
+
+    market_buy = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(market_buy)
+
+    assert market_buy.status == OrderStatus.FILLED
+    assert market_buy.filled_quantity == Decimal("0.5")
+    assert market_buy.remaining_quantity() == Decimal("0")
+
+    assert buyer.get_balance("BTC").available == Decimal("0.5")
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+
+    # 0.3 * 30000 = 9000
+    # 0.2 * 30100 = 6020
+    # total spend = 15020
+
+    assert buyer.get_balance("USDT").available == Decimal("34980")
+
+    assert len(engine.trades) == 2
+
+    assert engine.trades[0].price == Decimal("30000")
+    assert engine.trades[0].quantity == Decimal("0.3")
+
+    assert engine.trades[1].price == Decimal("30100")
+    assert engine.trades[1].quantity == Decimal("0.2")
+
+    # 0.2 BTC should remain from seller2
+    assert book.best_ask() == Decimal("30100")
+    assert book.get_best_ask_order().remaining_quantity() == Decimal("0.2")
+
+def test_partial_market_sell():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer1 = wallet_manager.get_wallet("buyer1")
+    buyer2 = wallet_manager.get_wallet("buyer2")
+    seller = wallet_manager.get_wallet("seller")
+
+    buyer1.deposit("USDT", Decimal("20000"))
+    buyer2.deposit("USDT", Decimal("20000"))
+    seller.deposit("BTC", Decimal("1"))
+
+    buy1 = Order(
+        user_id="buyer1",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.2"),
+    )
+
+    buy2 = Order(
+        user_id="buyer2",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("29900"),
+        quantity=Decimal("0.3"),
+    )
+
+    engine.submit_order(buy1)
+    engine.submit_order(buy2)
+
+    market_sell = Order(
+        user_id="seller",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(market_sell)
+
+    assert market_sell.filled_quantity == Decimal("0.5")
+    assert market_sell.remaining_quantity() == Decimal("0.5")
+    assert market_sell.status == OrderStatus.EXPIRED
+
+    # Seller sold only 0.5 BTC
+    assert seller.get_balance("BTC").available == Decimal("0.5")
+    assert seller.get_balance("BTC").locked == Decimal("0")
+
+    # 0.2 * 30000 = 6000
+    # 0.3 * 29900 = 8970
+    # total proceeds = 14970
+
+    assert seller.get_balance("USDT").available == Decimal("14970")
+
+    assert len(engine.trades) == 2
+
+    assert engine.trades[0].price == Decimal("30000")
+    assert engine.trades[0].quantity == Decimal("0.2")
+
+    assert engine.trades[1].price == Decimal("29900")
+    assert engine.trades[1].quantity == Decimal("0.3")
+
+    assert book.best_bid() is None
+
+def test_market_buy_with_empty_book():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit("USDT", Decimal("50000"))
+
+    market_buy = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("1"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No sell liquidity available"
+    ):
+        engine.submit_order(market_buy)
+
+    # Nothing should have been locked or spent
+    assert buyer.get_balance("USDT").available == Decimal("50000")
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+
+    assert buyer.get_balance("BTC").available == Decimal("0")
+
+    assert len(engine.trades) == 0

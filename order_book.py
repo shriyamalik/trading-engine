@@ -126,3 +126,31 @@ class OrderBook:
 
         if not book_side[order.price]:
             del book_side[order.price]
+
+    def estimate_market_buy_cost(
+        self,
+        quantity: Decimal
+    ) -> tuple[Decimal, Decimal]:
+
+        remaining = quantity
+        total_cost = Decimal("0")
+        fillable_quantity = Decimal("0")
+
+        for price in sorted(self.asks.keys()):
+            for order in self.asks[price]:
+
+                available = order.remaining_quantity()
+
+                trade_quantity = min(
+                    remaining,
+                    available
+                )
+
+                total_cost += trade_quantity * price
+                fillable_quantity += trade_quantity
+                remaining -= trade_quantity
+
+                if remaining == 0:
+                    return total_cost, fillable_quantity
+
+        return total_cost, fillable_quantity

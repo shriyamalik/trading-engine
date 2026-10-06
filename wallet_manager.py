@@ -1,5 +1,6 @@
-from wallet import Wallet
+# account manager for each users account balances
 
+from wallet import Wallet
 
 class WalletManager:
     def __init__(self):

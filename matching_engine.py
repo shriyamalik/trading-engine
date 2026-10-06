@@ -21,10 +21,6 @@ class MatchingEngine:
         if incoming_order.symbol != self.order_book.symbol:
             raise ValueError("Order symbol does not match this order book.")
 
-        if incoming_order.order_type == OrderType.MARKET:
-            raise NotImplementedError(
-                "Market orders are not supported yet."
-            )
         self._reserve_funds(incoming_order)
         
         if incoming_order.side == OrderSide.BUY:
@@ -33,11 +29,26 @@ class MatchingEngine:
         else:
             self._match_sell_order(incoming_order)
 
+        # LIMIT orders that are not fully filled should be added to the order book
         if (
             incoming_order.remaining_quantity() > 0
             and incoming_order.order_type == OrderType.LIMIT
         ):
             self.order_book.add_order(incoming_order)
+
+        # MARKET orders remainders should be marked as EXPIRED
+        if (incoming_order.order_type == OrderType.MARKET and incoming_order.remaining_quantity() > 0):
+            wallet = self.wallet_manager.get_wallet(incoming_order.user_id)
+
+            remaining = incoming_order.remaining_quantity()
+
+            if incoming_order.side == OrderSide.SELL:
+                wallet.unlock(
+                    "BTC",
+                    remaining
+                )
+
+            incoming_order.status = OrderStatus.EXPIRED
 
         return incoming_order
 
@@ -135,22 +146,54 @@ class MatchingEngine:
             order.status = OrderStatus.OPEN
 
     def _reserve_funds(self, order: Order):
-        wallet = self.wallet_manager.get_wallet(order.user_id)
+        wallet = self.wallet_manager.get_wallet(
+            order.user_id
+        )
 
-        if order.side == OrderSide.BUY:
-            required_usdt = order.price * order.quantity
-            wallet.lock("USDT", required_usdt)
+        if order.side == OrderSide.SELL:
+            wallet.lock(
+                "BTC",
+                order.quantity
+            )
+            return
 
-        else:
-            wallet.lock("BTC", order.quantity)
+        # BUY LIMIT
+        if order.order_type == OrderType.LIMIT:
+            required_usdt = (
+                order.price * order.quantity
+            )
 
+            wallet.lock(
+                "USDT",
+                required_usdt
+            )
+
+            return
+
+        # BUY MARKET
+        estimated_cost, fillable_quantity = (
+            self.order_book.estimate_market_buy_cost(
+                order.quantity
+            )
+        )
+    
+        if fillable_quantity == 0:
+            raise ValueError(
+                "No sell liquidity available."
+            )
+
+        wallet.lock(
+            "USDT",
+            estimated_cost
+        )
+    
     def _settle_trade(
         self,
         buy_order: Order,
         sell_order: Order,
         execution_price: Decimal,
         quantity: Decimal
-    ):
+        ):
         buyer_wallet = self.wallet_manager.get_wallet(
         buy_order.user_id
         )
@@ -161,9 +204,18 @@ class MatchingEngine:
 
         actual_cost = execution_price * quantity
 
-        reserved_for_fill = buy_order.price * quantity
+        if buy_order.order_type == OrderType.LIMIT:
+            reserved_for_fill = (
+                buy_order.price * quantity
+        )
 
-        refund = reserved_for_fill - actual_cost
+            refund = reserved_for_fill - actual_cost
+
+        else:
+            # Market BUY was reserved using
+            # actual order-book prices
+            reserved_for_fill = actual_cost
+            refund = Decimal("0")
     
         # Buyer:
         # Remove the amount that had been reserved for this portion
@@ -197,3 +249,28 @@ class MatchingEngine:
             "USDT",
             actual_cost 
         )
+
+    def cancel_order(self, order: Order):
+        if order.status == OrderStatus.FILLED:
+            raise ValueError("Filled orders cannot be cancelled.")
+        if order.status == OrderStatus.CANCELLED:
+            raise ValueError("Order is already cancelled.")
+
+        if not self.order_book.contains_order(order):
+            raise ValueError("Order is not in order Book.")
+
+        wallet = self.wallet_manager.get_wallet(order.user_id)
+
+        remaining = order.remaining_quantity()
+
+        if order.side == OrderSide.BUY:
+            amount_to_unlock = order.price * remaining
+            wallet.unlock("USDT", amount_to_unlock)
+        else:
+            wallet.unlock("BTC", remaining)
+
+        self.order_book.remove_order(order)
+
+        order.status = OrderStatus.CANCELLED
+
+        return order
