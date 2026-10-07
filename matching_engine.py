@@ -10,19 +10,118 @@ class MatchingEngine:
         self,
         order_book: OrderBook,
         wallet_manager: WalletManager
-):
+    ):
         self.order_book = order_book
         self.wallet_manager = wallet_manager
         self.trades: list[Trade] = []
+        self.submitted_order_ids: set[str] = set()
+
+    def validate_state(self):
+        expected_locks: dict[str, dict[str, Decimal]] = {}
+
+        # ---------------------------------
+        # CALCULATE EXPECTED LOCKED FUNDS
+        # ---------------------------------
+
+        for order in self.order_book.get_active_orders():
+
+            if order.order_type != OrderType.LIMIT:
+                raise RuntimeError(
+                    "Market order found resting in order book."
+                )
+
+            if order.status not in {
+                OrderStatus.OPEN,
+                OrderStatus.PARTIALLY_FILLED,
+            }:
+                raise RuntimeError(
+                    f"Inactive order {order.id} found in order book."
+                )
+
+            if order.remaining_quantity() <= 0:
+                raise RuntimeError(
+                    f"Order {order.id} has no remaining quantity."
+                )
+
+            if order.user_id not in expected_locks:
+                expected_locks[order.user_id] = {
+                    "BTC": Decimal("0"),
+                    "USDT": Decimal("0"),
+                }
+
+            if order.side == OrderSide.BUY:
+                expected_locks[order.user_id]["USDT"] += (
+                    order.price * order.remaining_quantity()
+                )
+
+            else:
+                expected_locks[order.user_id]["BTC"] += (
+                    order.remaining_quantity()
+                )
+
+        # ---------------------------------
+        # CHECK ACTUAL WALLET BALANCES
+        # ---------------------------------
+
+        for user_id, wallet in self.wallet_manager.wallets.items():
+
+            wallet.validate_balances()
+
+            expected = expected_locks.get(
+                user_id,
+                {
+                    "BTC": Decimal("0"),
+                    "USDT": Decimal("0"),
+                }
+            )
+
+            btc_locked = (
+                wallet.balances.get("BTC").locked
+                if "BTC" in wallet.balances
+                else Decimal("0")
+            )
+
+            usdt_locked = (
+                wallet.balances.get("USDT").locked
+                if "USDT" in wallet.balances
+                else Decimal("0")
+            )
+
+            if btc_locked != expected["BTC"]:
+                raise RuntimeError(
+                    f"BTC lock mismatch for {user_id}: "
+                    f"expected {expected['BTC']}, "
+                    f"actual {btc_locked}"
+                )
+
+            if usdt_locked != expected["USDT"]:
+                raise RuntimeError(
+                    f"USDT lock mismatch for {user_id}: "
+                    f"expected {expected['USDT']}, "
+                    f"actual {usdt_locked}"
+                )
+
+        return True
 
     def submit_order(self, incoming_order: Order):
-        incoming_order.validate()
 
-        if incoming_order.symbol != self.order_book.symbol:
-            raise ValueError("Order symbol does not match this order book.")
+        if incoming_order.id in self.submitted_order_ids:
+            raise ValueError("Order has already been submitted.")
 
-        self._reserve_funds(incoming_order)
-        
+        self.submitted_order_ids.add(incoming_order.id)
+
+        try:
+            incoming_order.validate()
+
+            if incoming_order.symbol != self.order_book.symbol:
+                raise ValueError("Order symbol does not match this order book.")
+
+            self._reserve_funds(incoming_order)
+            
+        except (ValueError, TypeError):
+            incoming_order.set_status(OrderStatus.REJECTED)
+            raise
+
         if incoming_order.side == OrderSide.BUY:
             self._match_buy_order(incoming_order)
 
@@ -48,7 +147,9 @@ class MatchingEngine:
                     remaining
                 )
 
-            incoming_order.status = OrderStatus.EXPIRED
+            incoming_order.set_status(OrderStatus.EXPIRED)
+
+        self.validate_state()
 
         return incoming_order
 
@@ -59,6 +160,10 @@ class MatchingEngine:
 
             if best_sell is None:
                 break
+
+            if best_sell.user_id == incoming_order.user_id:
+                self.cancel_order(best_sell, validate_after=False)
+                continue
 
             if (
                 incoming_order.order_type == OrderType.LIMIT
@@ -79,6 +184,10 @@ class MatchingEngine:
 
             if best_buy is None:
                 break
+
+            if best_buy.user_id == incoming_order.user_id:
+                self.cancel_order(best_buy, validate_after=False)
+                continue
 
             if (
                 incoming_order.order_type == OrderType.LIMIT
@@ -137,13 +246,13 @@ class MatchingEngine:
 
     def _update_order_status(self, order: Order):
         if order.remaining_quantity() == 0:
-            order.status = OrderStatus.FILLED
+            order.set_status(OrderStatus.FILLED)
 
         elif order.filled_quantity > 0:
-            order.status = OrderStatus.PARTIALLY_FILLED
+            order.set_status(OrderStatus.PARTIALLY_FILLED)
 
         else:
-            order.status = OrderStatus.OPEN
+            order.set_status(OrderStatus.OPEN)
 
     def _reserve_funds(self, order: Order):
         wallet = self.wallet_manager.get_wallet(
@@ -250,14 +359,24 @@ class MatchingEngine:
             actual_cost 
         )
 
-    def cancel_order(self, order: Order):
-        if order.status == OrderStatus.FILLED:
-            raise ValueError("Filled orders cannot be cancelled.")
-        if order.status == OrderStatus.CANCELLED:
-            raise ValueError("Order is already cancelled.")
+    def cancel_order(self, order: Order, validate_after: bool = True):
+
+        terminal_states = {
+            OrderStatus.FILLED,
+            OrderStatus.CANCELLED,
+            OrderStatus.EXPIRED,
+            OrderStatus.REJECTED,
+        }
+
+        if order.status in terminal_states:
+            raise ValueError(
+                f"{order.status.value} orders cannot be cancelled."
+            )
 
         if not self.order_book.contains_order(order):
-            raise ValueError("Order is not in order Book.")
+            raise ValueError(
+                "Order is not currently active in the order book."
+            )
 
         wallet = self.wallet_manager.get_wallet(order.user_id)
 
@@ -271,6 +390,9 @@ class MatchingEngine:
 
         self.order_book.remove_order(order)
 
-        order.status = OrderStatus.CANCELLED
+        order.set_status(OrderStatus.CANCELLED)
+
+        if validate_after:
+            self.validate_state()
 
         return order

@@ -62,6 +62,45 @@ class Order:
     def remaining_quantity(self) -> Decimal:
         return self.quantity - self.filled_quantity
 
+    def set_status(self, new_status: OrderStatus):
+        allowed_transitions = {
+            OrderStatus.OPEN: {
+                OrderStatus.PARTIALLY_FILLED,
+                OrderStatus.FILLED,
+                OrderStatus.CANCELLED,
+                OrderStatus.EXPIRED,
+                OrderStatus.REJECTED,
+            },
+
+            OrderStatus.PARTIALLY_FILLED: {
+                OrderStatus.FILLED,
+                OrderStatus.CANCELLED,
+                OrderStatus.EXPIRED,
+            },
+
+            OrderStatus.FILLED: set(),
+            OrderStatus.CANCELLED: set(),
+            OrderStatus.EXPIRED: set(),
+            OrderStatus.REJECTED: set(),
+        }
+
+        # Same status is allowed because another partial fill may
+        # still represent a meaningful update to the order.
+        if new_status == self.status:
+            self.updated_at = datetime.now(timezone.utc)
+            return
+
+        if new_status not in allowed_transitions[self.status]:
+            raise ValueError(
+                f"Invalid order status transition: "
+                f"{self.status.value} -> {new_status.value}"
+            )
+
+        self.status = new_status
+        self.updated_at = datetime.now(timezone.utc)
+
+    
+
 @dataclass
 class Trade:
     buy_order_id: str
@@ -72,3 +111,5 @@ class Trade:
 
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    

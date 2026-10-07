@@ -657,3 +657,272 @@ def test_market_buy_with_empty_book():
     assert buyer.get_balance("BTC").available == Decimal("0")
 
     assert len(engine.trades) == 0
+
+# Testing cases for rejected orders
+
+def test_duplicate_order_submission_rejected():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit("USDT", Decimal("50000"))
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(order)
+
+    with pytest.raises(
+        ValueError,
+        match="Order has already been submitted"
+    ):
+        engine.submit_order(order)
+
+    # Should only have been locked once
+    assert buyer.get_balance("USDT").available == Decimal("20000")
+    assert buyer.get_balance("USDT").locked == Decimal("30000")
+
+def test_invalid_order_becomes_rejected():
+    wallet_manager, book, engine = setup_exchange()
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("-1"),
+    )
+
+    with pytest.raises(ValueError):
+        engine.submit_order(order)
+
+    assert order.status == OrderStatus.REJECTED
+
+def test_insufficient_funds_rejects_order():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit("USDT", Decimal("100"))
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    with pytest.raises(ValueError):
+        engine.submit_order(order)
+
+    assert order.status == OrderStatus.REJECTED
+
+    assert buyer.get_balance("USDT").available == Decimal("100")
+    assert buyer.get_balance("USDT").locked == Decimal("0")
+
+def test_filled_order_cannot_be_cancelled():
+    wallet_manager, book, engine = setup_exchange()
+
+    seller = wallet_manager.get_wallet("seller")
+    buyer = wallet_manager.get_wallet("buyer")
+
+    seller.deposit("BTC", Decimal("1"))
+    buyer.deposit("USDT", Decimal("50000"))
+
+    sell_order = Order(
+        user_id="seller",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.5"),
+    )
+
+    buy_order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(sell_order)
+    engine.submit_order(buy_order)
+
+    assert sell_order.status == OrderStatus.FILLED
+
+    with pytest.raises(
+        ValueError,
+        match="FILLED orders cannot be cancelled"
+    ):
+        engine.cancel_order(sell_order)
+
+def test_updated_at_changes_after_fill():
+    wallet_manager, book, engine = setup_exchange()
+
+    seller = wallet_manager.get_wallet("seller")
+    buyer = wallet_manager.get_wallet("buyer")
+
+    seller.deposit("BTC", Decimal("1"))
+    buyer.deposit("USDT", Decimal("50000"))
+
+    sell_order = Order(
+        user_id="seller",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(sell_order)
+
+    original_updated_at = sell_order.updated_at
+
+    buy_order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(buy_order)
+
+    assert sell_order.updated_at > original_updated_at
+
+def test_multiple_active_orders_have_correct_locked_balance():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+
+    buyer.deposit(
+        "USDT",
+        Decimal("100000")
+    )
+
+    order1 = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    order2 = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("29000"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(order1)
+    engine.submit_order(order2)
+
+    expected_locked = Decimal("44500")
+
+    assert (
+        buyer.get_balance("USDT").locked
+        == expected_locked
+    )
+
+    assert engine.validate_state() is True
+
+def test_state_validation_detects_wrong_locked_balance():
+    wallet_manager, book, engine = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+
+    buyer.deposit(
+        "USDT",
+        Decimal("50000")
+    )
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(order)
+
+    # Deliberately corrupt state
+    buyer.get_balance("USDT").locked = Decimal("25000")
+
+    with pytest.raises(
+        RuntimeError,
+        match="USDT lock mismatch"
+    ):
+        engine.validate_state()
+
+def test_self_trade_cancels_resting_order():
+    wallet_manager, book, engine = setup_exchange()
+
+    alice = wallet_manager.get_wallet("alice")
+    bob = wallet_manager.get_wallet("bob")
+
+    alice.deposit("BTC", Decimal("1"))
+    alice.deposit("USDT", Decimal("50000"))
+
+    bob.deposit("BTC", Decimal("1"))
+
+    alice_sell = Order(
+        user_id="alice",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("0.5"),
+    )
+
+    bob_sell = Order(
+        user_id="bob",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30100"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(alice_sell)
+    engine.submit_order(bob_sell)
+
+    alice_buy = Order(
+        user_id="alice",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30100"),
+        quantity=Decimal("0.5"),
+    )
+
+    engine.submit_order(alice_buy)
+
+    # Alice's own resting sell was removed
+    assert alice_sell.status == OrderStatus.CANCELLED
+
+    # Alice should trade with Bob instead
+    assert bob_sell.status == OrderStatus.FILLED
+    assert alice_buy.status == OrderStatus.FILLED
+
+    assert len(engine.trades) == 1
+
+    assert engine.trades[0].sell_order_id == bob_sell.id
+    assert engine.trades[0].buy_order_id == alice_buy.id
+
+    assert engine.validate_state() is True

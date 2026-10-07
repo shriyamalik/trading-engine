@@ -14,6 +14,18 @@ class Wallet:
         self.user_id = user_id
         self.balances: dict[str, Balance] = {}
 
+    def validate_balances(self):
+        for asset, balance in self.balances.items():
+            if balance.available < 0:
+                raise RuntimeError(
+                    f"{self.user_id} has negative available {asset} balance."
+                )
+
+            if balance.locked < 0:
+                raise RuntimeError(
+                    f"{self.user_id} has negative locked {asset} balance."
+                )
+
     # get balance for asset. Create new balance if it doesn't exist
     def get_balance(self, asset: str) -> Balance:
         if asset not in self.balances:

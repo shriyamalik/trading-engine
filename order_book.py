@@ -14,6 +14,7 @@ class OrderBook:
         self.bids: dict[Decimal, deque[Order]] = defaultdict(deque)
         self.asks: dict[Decimal, deque[Order]] = defaultdict(deque)
 
+
     def add_order(self, order: Order):
         if order.symbol != self.symbol:
             raise ValueError(
@@ -154,3 +155,16 @@ class OrderBook:
                     return total_cost, fillable_quantity
 
         return total_cost, fillable_quantity
+
+    def get_active_orders(self) -> list[Order]:
+        active_orders = []
+
+        for orders_at_price in self.bids.values():
+            active_orders.extend(orders_at_price)
+
+        for orders_at_price in self.asks.values():
+            active_orders.extend(orders_at_price)
+
+        return active_orders
+
+    
