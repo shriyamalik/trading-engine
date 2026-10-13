@@ -4,10 +4,16 @@ from models import Order, OrderSide, OrderType
 from order_book import OrderBook
 from matching_engine import MatchingEngine
 from wallet_manager import WalletManager
+from order_manager import OrderManager
+from quote_service import QuoteService
+from exchange_service import ExchangeService
 
 wallet_manager = WalletManager()
+order_manager = OrderManager()
 book = OrderBook("BTCUSDT")
-engine = MatchingEngine(book, wallet_manager)
+engine = MatchingEngine(book, wallet_manager, order_manager)
+quote_service = QuoteService(engine)
+exchange_service = ExchangeService(engine, quote_service)
 
 alice_wallet = wallet_manager.get_wallet("alice")
 bob_wallet = wallet_manager.get_wallet("bob")

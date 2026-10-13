@@ -167,4 +167,47 @@ class OrderBook:
 
         return active_orders
 
-    
+    def estimate_execution(
+        self,
+        side: OrderSide,
+        quantity: Decimal,
+        exclude_user_id=None,
+    ):
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError("Quantity must be positive and finite.")
+
+        if side == OrderSide.BUY:
+            levels = self.asks
+            prices = sorted(levels.keys())
+
+        elif side == OrderSide.SELL:
+            levels = self.bids
+            prices = sorted(levels.keys(), reverse=True)
+
+        else:
+            raise ValueError("Invalid order side.")
+
+        remaining = quantity
+        fills = []
+
+        for price in prices:
+
+            available = sum(
+                (
+                    order.remaining_quantity()
+                    for order in levels[price]
+                    if order.user_id != exclude_user_id
+                ),
+                Decimal("0")
+            )
+
+            fill_quantity = min(remaining, available)
+
+            if fill_quantity > 0:
+                fills.append((price, fill_quantity))
+                remaining -= fill_quantity
+
+            if remaining == 0:
+                break
+
+        return fills

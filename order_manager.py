@@ -1,3 +1,5 @@
+from typing import Optional
+
 from models import Order, OrderStatus
 
 class OrderManager:
@@ -16,7 +18,7 @@ class OrderManager:
 
         return self.orders[order_id]
 
-    def get_user_orders(self, user_id: str) -> list[Order]:
+    def get_user_orders(self, user_id: Optional[str]) -> list[Order]:
         return [
             order
             for order in self.orders.values()
@@ -25,7 +27,7 @@ class OrderManager:
 
     def get_active_orders(
         self,
-        user_id: str | None = None
+        user_id: Optional[str] = None
     ) -> list[Order]:
 
         active_statuses = {

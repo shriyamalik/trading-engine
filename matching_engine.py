@@ -1,20 +1,22 @@
 from decimal import Decimal
+from typing import Optional
 
 from models import Order, OrderSide, OrderStatus, OrderType, Trade
 from order_book import OrderBook
 from wallet_manager import WalletManager
-
+from order_manager import OrderManager
 
 class MatchingEngine:
     def __init__(
         self,
         order_book: OrderBook,
-        wallet_manager: WalletManager
+        wallet_manager: WalletManager,
+        order_manager: Optional[OrderManager] = None,
     ):
         self.order_book = order_book
         self.wallet_manager = wallet_manager
+        self.order_manager = order_manager or OrderManager()
         self.trades: list[Trade] = []
-        self.submitted_order_ids: set[str] = set()
 
     def validate_state(self):
         expected_locks: dict[str, dict[str, Decimal]] = {}
@@ -105,10 +107,7 @@ class MatchingEngine:
 
     def submit_order(self, incoming_order: Order):
 
-        if incoming_order.id in self.submitted_order_ids:
-            raise ValueError("Order has already been submitted.")
-
-        self.submitted_order_ids.add(incoming_order.id)
+        self.order_manager.register_order(incoming_order)
 
         try:
             incoming_order.validate()
@@ -396,3 +395,85 @@ class MatchingEngine:
             self.validate_state()
 
         return order
+
+    def cancel_order_by_id(
+        self,
+        order_id: str,
+        user_id: Optional[str] = None
+    ):
+        order = self.order_manager.get_order(
+            order_id
+        )
+
+        if (
+            user_id is not None
+            and order.user_id != user_id
+        ):
+            raise ValueError(
+                "User does not own this order."
+            )
+
+        return self.cancel_order(order)
+
+    def replace_order(
+        self,
+        order_id: str,
+        new_price: Optional[Decimal] = None,
+        new_quantity: Optional[Decimal] = None,
+        user_id: Optional[str] = None,
+    ):
+        old_order = self.order_manager.get_order(
+            order_id
+        )
+
+        if (
+            user_id is not None
+            and old_order.user_id != user_id
+        ):
+            raise ValueError(
+                "User does not own this order."
+            )
+
+        if old_order.order_type != OrderType.LIMIT:
+            raise ValueError(
+                "Only limit orders can be replaced."
+            )
+
+        if old_order.status not in {
+            OrderStatus.OPEN,
+            OrderStatus.PARTIALLY_FILLED,
+        }:
+            raise ValueError(
+                "Only active orders can be replaced."
+            )
+
+        replacement_quantity = (
+            new_quantity
+            if new_quantity is not None
+            else old_order.remaining_quantity()
+        )
+
+        replacement_price = (
+            new_price
+            if new_price is not None
+            else old_order.price
+        )
+
+        # Cancel first:
+        # removes from book and unlocks remaining funds
+        self.cancel_order(old_order)
+
+        replacement_order = Order(
+            user_id=old_order.user_id,
+            symbol=old_order.symbol,
+            side=old_order.side,
+            order_type=OrderType.LIMIT,
+            price=replacement_price,
+            quantity=replacement_quantity,
+        )
+
+        self.submit_order(
+            replacement_order
+        )
+
+        return replacement_order

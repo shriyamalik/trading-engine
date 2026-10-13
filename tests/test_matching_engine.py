@@ -6,18 +6,19 @@ from models import Order, OrderSide, OrderStatus, OrderType
 from order_book import OrderBook
 from matching_engine import MatchingEngine
 from wallet_manager import WalletManager
-
+from order_manager import OrderManager
 
 def setup_exchange():
     wallet_manager = WalletManager()
+    order_manager = OrderManager()
     book = OrderBook("BTCUSDT")
-    engine = MatchingEngine(book, wallet_manager)
+    engine = MatchingEngine(book, wallet_manager, order_manager)
 
-    return wallet_manager, book, engine
+    return wallet_manager, order_manager, book, engine
 
 
 def test_full_fill():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -63,7 +64,7 @@ def test_full_fill():
 
 
 def test_partial_fill():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -105,7 +106,7 @@ def test_partial_fill():
 
 
 def test_price_improvement_refund():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -142,7 +143,7 @@ def test_price_improvement_refund():
 
 
 def test_locked_balance_matches_remaining_buy_order():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -179,7 +180,7 @@ def test_locked_balance_matches_remaining_buy_order():
 
 
 def test_insufficient_usdt():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
     buyer.deposit("USDT", Decimal("1000"))
@@ -198,7 +199,7 @@ def test_insufficient_usdt():
 
 
 def test_insufficient_btc():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     seller.deposit("BTC", Decimal("0.1"))
@@ -217,7 +218,7 @@ def test_insufficient_btc():
 
 
 def test_invalid_negative_quantity():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     order = Order(
         user_id="buyer",
@@ -253,7 +254,7 @@ def test_invalid_negative_quantity():
 #         engine.submit_order(order)
 
 def test_multiple_price_levels():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller1 = wallet_manager.get_wallet("seller1")
     seller2 = wallet_manager.get_wallet("seller2")
@@ -362,7 +363,7 @@ def test_multiple_price_levels():
     assert buyer.get_balance("USDT").available == Decimal("31950")
 
 def test_cancel_buy_order():
-    wallet_manager, book, engine =setup_exchange()
+    wallet_manager, order_manager, book, engine =setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
     buyer.deposit("USDT", Decimal("50000"))
@@ -390,7 +391,7 @@ def test_cancel_buy_order():
     assert not book.contains_order(buy_order)
 
 def test_cancel_partially_filled_buy_order():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     seller.deposit("BTC", Decimal("0.4"))
@@ -432,7 +433,7 @@ def test_cancel_partially_filled_buy_order():
     
 
 def test_market_buy_partial_fill():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller1 = wallet_manager.get_wallet("seller1")
     seller2 = wallet_manager.get_wallet("seller2")
@@ -498,7 +499,7 @@ def test_market_buy_partial_fill():
     assert book.best_ask() is None
 
 def test_full_market_buy():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller1 = wallet_manager.get_wallet("seller1")
     seller2 = wallet_manager.get_wallet("seller2")
@@ -565,7 +566,7 @@ def test_full_market_buy():
     assert book.get_best_ask_order().remaining_quantity() == Decimal("0.2")
 
 def test_partial_market_sell():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer1 = wallet_manager.get_wallet("buyer1")
     buyer2 = wallet_manager.get_wallet("buyer2")
@@ -631,7 +632,7 @@ def test_partial_market_sell():
     assert book.best_bid() is None
 
 def test_market_buy_with_empty_book():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
     buyer.deposit("USDT", Decimal("50000"))
@@ -661,7 +662,7 @@ def test_market_buy_with_empty_book():
 # Testing cases for rejected orders
 
 def test_duplicate_order_submission_rejected():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
     buyer.deposit("USDT", Decimal("50000"))
@@ -688,7 +689,7 @@ def test_duplicate_order_submission_rejected():
     assert buyer.get_balance("USDT").locked == Decimal("30000")
 
 def test_invalid_order_becomes_rejected():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     order = Order(
         user_id="buyer",
@@ -705,7 +706,7 @@ def test_invalid_order_becomes_rejected():
     assert order.status == OrderStatus.REJECTED
 
 def test_insufficient_funds_rejects_order():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
     buyer.deposit("USDT", Decimal("100"))
@@ -728,7 +729,7 @@ def test_insufficient_funds_rejects_order():
     assert buyer.get_balance("USDT").locked == Decimal("0")
 
 def test_filled_order_cannot_be_cancelled():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -766,7 +767,7 @@ def test_filled_order_cannot_be_cancelled():
         engine.cancel_order(sell_order)
 
 def test_updated_at_changes_after_fill():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     seller = wallet_manager.get_wallet("seller")
     buyer = wallet_manager.get_wallet("buyer")
@@ -801,7 +802,7 @@ def test_updated_at_changes_after_fill():
     assert sell_order.updated_at > original_updated_at
 
 def test_multiple_active_orders_have_correct_locked_balance():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
 
@@ -841,7 +842,7 @@ def test_multiple_active_orders_have_correct_locked_balance():
     assert engine.validate_state() is True
 
 def test_state_validation_detects_wrong_locked_balance():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     buyer = wallet_manager.get_wallet("buyer")
 
@@ -871,7 +872,7 @@ def test_state_validation_detects_wrong_locked_balance():
         engine.validate_state()
 
 def test_self_trade_cancels_resting_order():
-    wallet_manager, book, engine = setup_exchange()
+    wallet_manager, order_manager, book, engine = setup_exchange()
 
     alice = wallet_manager.get_wallet("alice")
     bob = wallet_manager.get_wallet("bob")
@@ -926,3 +927,133 @@ def test_self_trade_cancels_resting_order():
     assert engine.trades[0].buy_order_id == alice_buy.id
 
     assert engine.validate_state() is True
+
+def test_order_can_be_found_by_id():
+    (
+        wallet_manager,
+        order_manager,
+        book,
+        engine,
+    ) = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit(
+        "USDT",
+        Decimal("50000")
+    )
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(order)
+
+    stored_order = order_manager.get_order(
+        order.id
+    )
+
+    assert stored_order is order
+
+def test_cancel_order_by_id():
+    (
+        wallet_manager,
+        order_manager,
+        book,
+        engine,
+    ) = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+    buyer.deposit(
+        "USDT",
+        Decimal("50000")
+    )
+
+    order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("30000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(order)
+
+    engine.cancel_order_by_id(
+        order.id,
+        user_id="buyer"
+    )
+
+    assert order.status == OrderStatus.CANCELLED
+
+    assert (
+        buyer.get_balance("USDT").locked
+        == Decimal("0")
+    )
+
+def test_replace_order():
+    (
+        wallet_manager,
+        order_manager,
+        book,
+        engine,
+    ) = setup_exchange()
+
+    buyer = wallet_manager.get_wallet("buyer")
+
+    buyer.deposit(
+        "USDT",
+        Decimal("50000")
+    )
+
+    old_order = Order(
+        user_id="buyer",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        price=Decimal("29000"),
+        quantity=Decimal("1"),
+    )
+
+    engine.submit_order(old_order)
+
+    replacement = engine.replace_order(
+        old_order.id,
+        new_price=Decimal("30000"),
+    )
+
+    assert old_order.status == OrderStatus.CANCELLED
+
+    assert replacement.id != old_order.id
+
+    assert replacement.price == Decimal("30000")
+
+    assert replacement.quantity == Decimal("1")
+
+    assert replacement.status == OrderStatus.OPEN
+
+    assert order_manager.get_order(
+        old_order.id
+    ) is old_order
+
+    assert order_manager.get_order(
+        replacement.id
+    ) is replacement
+
+    assert book.contains_order(
+        old_order
+    ) is False
+
+    assert book.contains_order(
+        replacement
+    ) is True
+
+    assert (
+        buyer.get_balance("USDT").locked
+        == Decimal("30000")
+    )
