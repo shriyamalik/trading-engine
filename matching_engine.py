@@ -5,6 +5,7 @@ from models import Order, OrderSide, OrderStatus, OrderType, Trade
 from order_book import OrderBook
 from wallet_manager import WalletManager
 from order_manager import OrderManager
+from settlement_service import SettlementService
 
 class MatchingEngine:
     def __init__(
@@ -16,6 +17,7 @@ class MatchingEngine:
         self.order_book = order_book
         self.wallet_manager = wallet_manager
         self.order_manager = order_manager or OrderManager()
+        self.settlement = SettlementService(wallet_manager)
         self.trades: list[Trade] = []
 
     def validate_state(self):
@@ -135,16 +137,13 @@ class MatchingEngine:
             self.order_book.add_order(incoming_order)
 
         # MARKET orders remainders should be marked as EXPIRED
-        if (incoming_order.order_type == OrderType.MARKET and incoming_order.remaining_quantity() > 0):
-            wallet = self.wallet_manager.get_wallet(incoming_order.user_id)
-
-            remaining = incoming_order.remaining_quantity()
-
-            if incoming_order.side == OrderSide.SELL:
-                wallet.unlock(
-                    "BTC",
-                    remaining
-                )
+        if (
+            incoming_order.order_type == OrderType.MARKET
+            and incoming_order.remaining_quantity() > 0
+        ):
+            self.settlement.release_market_remainder(
+                incoming_order
+            )
 
             incoming_order.set_status(OrderStatus.EXPIRED)
 
@@ -254,45 +253,9 @@ class MatchingEngine:
             order.set_status(OrderStatus.OPEN)
 
     def _reserve_funds(self, order: Order):
-        wallet = self.wallet_manager.get_wallet(
-            order.user_id
-        )
-
-        if order.side == OrderSide.SELL:
-            wallet.lock(
-                "BTC",
-                order.quantity
-            )
-            return
-
-        # BUY LIMIT
-        if order.order_type == OrderType.LIMIT:
-            required_usdt = (
-                order.price * order.quantity
-            )
-
-            wallet.lock(
-                "USDT",
-                required_usdt
-            )
-
-            return
-
-        # BUY MARKET
-        estimated_cost, fillable_quantity = (
-            self.order_book.estimate_market_buy_cost(
-                order.quantity
-            )
-        )
-    
-        if fillable_quantity == 0:
-            raise ValueError(
-                "No sell liquidity available."
-            )
-
-        wallet.lock(
-            "USDT",
-            estimated_cost
+        return self.settlement.reserve_funds(
+            order,
+            self.order_book
         )
     
     def _settle_trade(
@@ -301,61 +264,12 @@ class MatchingEngine:
         sell_order: Order,
         execution_price: Decimal,
         quantity: Decimal
-        ):
-        buyer_wallet = self.wallet_manager.get_wallet(
-        buy_order.user_id
-        )
-
-        seller_wallet = self.wallet_manager.get_wallet(
-            sell_order.user_id
-        )
-
-        actual_cost = execution_price * quantity
-
-        if buy_order.order_type == OrderType.LIMIT:
-            reserved_for_fill = (
-                buy_order.price * quantity
-        )
-
-            refund = reserved_for_fill - actual_cost
-
-        else:
-            # Market BUY was reserved using
-            # actual order-book prices
-            reserved_for_fill = actual_cost
-            refund = Decimal("0")
-    
-        # Buyer:
-        # Remove the amount that had been reserved for this portion
-        buyer_wallet.consume_locked(
-            "USDT",
-            reserved_for_fill
-        )
-
-        # Return price improvement
-        if refund > 0:
-            buyer_wallet.deposit(
-                "USDT",
-                refund
-            )
-
-        # Buyer receives BTC
-        buyer_wallet.deposit(
-            "BTC",
+    ):
+        return self.settlement.settle_trade(
+            buy_order,
+            sell_order,
+            execution_price,
             quantity
-        )
-
-        # Seller:
-        # BTC was already locked when sell order was created
-        seller_wallet.consume_locked(
-            "BTC",
-            quantity
-        )
-
-        # Seller receives actual trade value
-        seller_wallet.deposit(
-            "USDT",
-            actual_cost 
         )
 
     def cancel_order(self, order: Order, validate_after: bool = True):
@@ -377,15 +291,7 @@ class MatchingEngine:
                 "Order is not currently active in the order book."
             )
 
-        wallet = self.wallet_manager.get_wallet(order.user_id)
-
-        remaining = order.remaining_quantity()
-
-        if order.side == OrderSide.BUY:
-            amount_to_unlock = order.price * remaining
-            wallet.unlock("USDT", amount_to_unlock)
-        else:
-            wallet.unlock("BTC", remaining)
+        self.settlement.release_order_funds(order)
 
         self.order_book.remove_order(order)
 

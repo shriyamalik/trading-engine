@@ -12,7 +12,7 @@ wallet_manager = WalletManager()
 order_manager = OrderManager()
 book = OrderBook("BTCUSDT")
 engine = MatchingEngine(book, wallet_manager, order_manager)
-quote_service = QuoteService(engine)
+quote_service = QuoteService(book)
 exchange_service = ExchangeService(engine, quote_service)
 
 alice_wallet = wallet_manager.get_wallet("alice")
@@ -42,8 +42,9 @@ sell2 = Order(
 )
 
 
-engine.submit_order(sell1)
-engine.submit_order(sell2)
+exchange_service.submit_order(sell1)
+exchange_service.submit_order(sell2)
+
 
 book.print_book()
 
@@ -57,7 +58,7 @@ buy = Order(
     quantity=Decimal("0.6")
 )
 
-engine.submit_order(buy)
+exchange_service.submit_order(buy)
 
 book.print_book()
 

@@ -3,12 +3,14 @@ from threading import RLock
 
 from models import Order, OrderSide, OrderType, OrderStatus
 from exchange_transaction import ExchangeTransaction
+from order_service import OrderService
 
 class ExchangeService:
 
     def __init__(self, engine, quote_service):
         self.engine = engine
         self.quote_service = quote_service
+        self.order_service = OrderService(engine, engine.order_manager)
 
         # Protects the check-then-execute sequence.
         self._lock = RLock()
@@ -23,22 +25,27 @@ class ExchangeService:
 
     def submit_order(self, order):
         with self._lock:
-            return self.engine.submit_order(order)
+            return self.order_service.submit_order(order)
 
     def cancel_order_by_id(self, order_id, user_id):
         with self._lock:
-            return self.engine.cancel_order_by_id(
+            return self.order_service.cancel_order(
                 order_id,
                 user_id=user_id,
             )
 
     def replace_order(self, order_id, user_id, **changes):
         with self._lock:
-            return self.engine.replace_order(
-                order_id,
-                user_id=user_id,
-                **changes,
-            )
+
+            with ExchangeTransaction(
+                self.engine,
+                self.quote_service,
+            ):
+                return self.order_service.replace_order(
+                    order_id,
+                    user_id,
+                    **changes,
+                )
 
     def accept_quote(
         self,
@@ -180,7 +187,7 @@ class ExchangeService:
                 self.engine,
                 self.quote_service,
             ):
-                executed_order = self.engine.submit_order(
+                executed_order = self.order_service.submit_order(
                     market_order
                 )
 
@@ -227,3 +234,17 @@ class ExchangeService:
             "original_quote_id": old_quote.id,
             "new_quote": new_quote,
         }
+
+    def get_order(self, order_id, user_id):
+        with self._lock:
+            order = self.order_service.get_order(order_id)
+
+            if order.user_id != user_id:
+                raise ValueError("User does not own this order.")
+
+            return order
+
+
+    def get_user_orders(self, user_id):
+        with self._lock:
+            return self.order_service.get_user_orders(user_id)
