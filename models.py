@@ -44,20 +44,35 @@ class Order:
 
 
     def validate(self):
-        if self.quantity <= 0:
-           raise ValueError("Order quantity must be positive.")
+        if not isinstance(self.side, OrderSide):
+            raise ValueError("Invalid order side.")
+
+        if not isinstance(self.order_type, OrderType):
+            raise ValueError("Invalid order type.")
+
+        if (
+            not isinstance(self.quantity, Decimal)
+            or not self.quantity.is_finite()
+            or self.quantity <= 0
+        ):
+            raise ValueError(
+                "Order quantity must be a positive finite Decimal."
+            )
 
         if self.order_type == OrderType.LIMIT:
-            if self.price is None or self.price <= 0:
+            if (
+                not isinstance(self.price, Decimal)
+                or not self.price.is_finite()
+                or self.price <= 0
+            ):
                 raise ValueError(
-                    "Limit order must have a positive price."
+                    "Limit order must have a positive finite price."
                 )
 
-        if self.order_type == OrderType.MARKET:
-            if self.price is not None:
-                raise ValueError(
-                    "Market order should not have a price."
-                )
+        elif self.price is not None:
+            raise ValueError(
+                "Market order must not specify a price."
+            )
 
     def remaining_quantity(self) -> Decimal:
         return self.quantity - self.filled_quantity

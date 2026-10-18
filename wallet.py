@@ -16,15 +16,19 @@ class Wallet:
 
     def validate_balances(self):
         for asset, balance in self.balances.items():
-            if balance.available < 0:
-                raise RuntimeError(
-                    f"{self.user_id} has negative available {asset} balance."
-                )
-
-            if balance.locked < 0:
-                raise RuntimeError(
-                    f"{self.user_id} has negative locked {asset} balance."
-                )
+            for name, amount in [
+                ("available", balance.available),
+                ("locked", balance.locked),
+            ]:
+                if (
+                    not isinstance(amount, Decimal)
+                    or not amount.is_finite()
+                    or amount < 0
+                ):
+                    raise RuntimeError(
+                        f"{self.user_id} has invalid "
+                        f"{name} {asset} balance."
+                    )
 
     # get balance for asset. Create new balance if it doesn't exist
     def get_balance(self, asset: str) -> Balance:
@@ -35,17 +39,13 @@ class Wallet:
 
     # deposit funds into the wallet
     def deposit(self, asset: str, amount: Decimal):
-        if amount <= 0:
-            raise ValueError("Deposit amount must be positive.")
-
+        self._validate_amount(amount)
         self.get_balance(asset).available += amount
 
     # lock funds for an order
     def lock(self, asset: str, amount: Decimal):
+        self._validate_amount(amount)
         balance = self.get_balance(asset)
-
-        if amount <= 0:
-            raise ValueError("Lock amount must be positive.")
 
         if balance.available < amount:
             raise ValueError(f"Insufficient {asset} balance.")
@@ -55,9 +55,7 @@ class Wallet:
 
     # unlock funds in case an order is cancelled
     def unlock(self, asset: str, amount: Decimal):
-        if amount <= 0:
-            raise ValueError("Unlock amount must be positive.")
-
+        self._validate_amount(amount)
         balance = self.get_balance(asset)
 
         if balance.locked < amount:
@@ -68,12 +66,21 @@ class Wallet:
 
     # decrease funds as spent/consumed when an order is filled
     def consume_locked(self, asset: str, amount: Decimal):
-        if amount <= 0:
-            raise ValueError("Consume amount must be positive.")
-    
+        self._validate_amount(amount)
         balance = self.get_balance(asset)
 
         if balance.locked < amount:
             raise ValueError(f"Insufficient locked {asset} balance.")
 
         balance.locked -= amount
+
+    @staticmethod
+    def _validate_amount(amount):
+        if (
+            not isinstance(amount, Decimal)
+            or not amount.is_finite()
+            or amount <= 0
+        ):
+            raise ValueError(
+                "Amount must be a positive finite Decimal."
+            )

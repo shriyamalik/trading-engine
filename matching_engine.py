@@ -107,50 +107,6 @@ class MatchingEngine:
 
         return True
 
-    def submit_order(self, incoming_order: Order):
-
-        self.order_manager.register_order(incoming_order)
-
-        try:
-            incoming_order.validate()
-
-            if incoming_order.symbol != self.order_book.symbol:
-                raise ValueError("Order symbol does not match this order book.")
-
-            self._reserve_funds(incoming_order)
-            
-        except (ValueError, TypeError):
-            incoming_order.set_status(OrderStatus.REJECTED)
-            raise
-
-        if incoming_order.side == OrderSide.BUY:
-            self._match_buy_order(incoming_order)
-
-        else:
-            self._match_sell_order(incoming_order)
-
-        # LIMIT orders that are not fully filled should be added to the order book
-        if (
-            incoming_order.remaining_quantity() > 0
-            and incoming_order.order_type == OrderType.LIMIT
-        ):
-            self.order_book.add_order(incoming_order)
-
-        # MARKET orders remainders should be marked as EXPIRED
-        if (
-            incoming_order.order_type == OrderType.MARKET
-            and incoming_order.remaining_quantity() > 0
-        ):
-            self.settlement.release_market_remainder(
-                incoming_order
-            )
-
-            incoming_order.set_status(OrderStatus.EXPIRED)
-
-        self.validate_state()
-
-        return incoming_order
-
     def _match_buy_order(self, incoming_order: Order):
         while incoming_order.remaining_quantity() > 0:
 
@@ -159,15 +115,14 @@ class MatchingEngine:
             if best_sell is None:
                 break
 
-            if best_sell.user_id == incoming_order.user_id:
-                self.cancel_order(best_sell, validate_after=False)
-                continue
-
-            if (
-                incoming_order.order_type == OrderType.LIMIT
+            if (incoming_order.order_type == OrderType.LIMIT
                 and incoming_order.price < best_sell.price
             ):
                 break
+
+            if best_sell.user_id == incoming_order.user_id:
+                self.cancel_order(best_sell, validate_after=False)
+                continue
 
             self._execute_trade(
                 buy_order=incoming_order,
@@ -183,16 +138,16 @@ class MatchingEngine:
             if best_buy is None:
                 break
 
-            if best_buy.user_id == incoming_order.user_id:
-                self.cancel_order(best_buy, validate_after=False)
-                continue
-
             if (
                 incoming_order.order_type == OrderType.LIMIT
                 and incoming_order.price > best_buy.price
             ):
                 break
 
+            if best_buy.user_id == incoming_order.user_id:
+                self.cancel_order(best_buy, validate_after=False)
+                continue
+            
             self._execute_trade(
                 buy_order=best_buy,
                 sell_order=incoming_order,
@@ -252,11 +207,6 @@ class MatchingEngine:
         else:
             order.set_status(OrderStatus.OPEN)
 
-    def _reserve_funds(self, order: Order):
-        return self.settlement.reserve_funds(
-            order,
-            self.order_book
-        )
     
     def _settle_trade(
         self,
@@ -302,84 +252,14 @@ class MatchingEngine:
 
         return order
 
-    def cancel_order_by_id(
-        self,
-        order_id: str,
-        user_id: Optional[str] = None
-    ):
-        order = self.order_manager.get_order(
-            order_id
-        )
+    def match_order(self, incoming_order: Order):
+        if incoming_order.side == OrderSide.BUY:
+            self._match_buy_order(incoming_order)
 
-        if (
-            user_id is not None
-            and order.user_id != user_id
-        ):
-            raise ValueError(
-                "User does not own this order."
-            )
+        elif incoming_order.side == OrderSide.SELL:
+            self._match_sell_order(incoming_order)
 
-        return self.cancel_order(order)
+        else:
+            raise ValueError("Invalid order side.")
 
-    def replace_order(
-        self,
-        order_id: str,
-        new_price: Optional[Decimal] = None,
-        new_quantity: Optional[Decimal] = None,
-        user_id: Optional[str] = None,
-    ):
-        old_order = self.order_manager.get_order(
-            order_id
-        )
-
-        if (
-            user_id is not None
-            and old_order.user_id != user_id
-        ):
-            raise ValueError(
-                "User does not own this order."
-            )
-
-        if old_order.order_type != OrderType.LIMIT:
-            raise ValueError(
-                "Only limit orders can be replaced."
-            )
-
-        if old_order.status not in {
-            OrderStatus.OPEN,
-            OrderStatus.PARTIALLY_FILLED,
-        }:
-            raise ValueError(
-                "Only active orders can be replaced."
-            )
-
-        replacement_quantity = (
-            new_quantity
-            if new_quantity is not None
-            else old_order.remaining_quantity()
-        )
-
-        replacement_price = (
-            new_price
-            if new_price is not None
-            else old_order.price
-        )
-
-        # Cancel first:
-        # removes from book and unlocks remaining funds
-        self.cancel_order(old_order)
-
-        replacement_order = Order(
-            user_id=old_order.user_id,
-            symbol=old_order.symbol,
-            side=old_order.side,
-            order_type=OrderType.LIMIT,
-            price=replacement_price,
-            quantity=replacement_quantity,
-        )
-
-        self.submit_order(
-            replacement_order
-        )
-
-        return replacement_order
+        return incoming_order

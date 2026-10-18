@@ -1,15 +1,18 @@
 from decimal import Decimal
 
+from exchange_transaction import ExchangeTransaction
 from models import Order, OrderSide, OrderType
 from order_book import OrderBook
 from matching_engine import MatchingEngine
 from wallet_manager import WalletManager
+from quote_service import QuoteService
 
 
 wallet_manager = WalletManager()
 book = OrderBook("BTCUSDT")
 engine = MatchingEngine(book, wallet_manager)
-
+quote_service = QuoteService(book)
+exchange = ExchangeTransaction(engine, quote_service)
 
 # -------------------------
 # SET UP USERS
@@ -44,7 +47,7 @@ sell_order = Order(
     quantity=Decimal("0.4")
 )
 
-engine.submit_order(sell_order)
+exchange.submit_order(sell_order)
 
 
 print("\nAFTER ALICE SELL ORDER")
@@ -65,7 +68,7 @@ buy_order = Order(
     quantity=Decimal("0.4")
 )
 
-engine.submit_order(buy_order)
+exchange.submit_order(buy_order)
 
 
 print("\nAFTER TRADE")
@@ -79,7 +82,7 @@ print("Bob USDT:", bob.get_balance("USDT"))
 
 print("\nTRADES")
 
-for trade in engine.trades:
+for trade in exchange.trades:
     print(
         trade.quantity,
         "BTC @",

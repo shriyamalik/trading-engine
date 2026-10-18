@@ -77,6 +77,10 @@ class ExchangeTransaction:
             self.quote_service.used_quote_ids
         )
 
+        self.invalidated_quote_ids = set(
+            self.quote_service.invalidated_quote_ids
+        )
+        
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -152,3 +156,11 @@ class ExchangeTransaction:
         self.quote_service.used_quote_ids.update(
             self.used_quote_ids
         )
+
+        self.quote_service.invalidated_quote_ids.clear()
+
+        self.quote_service.invalidated_quote_ids.update(
+            self.invalidated_quote_ids
+        )
+
+ 

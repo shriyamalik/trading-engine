@@ -4,6 +4,7 @@ from threading import RLock
 from models import Order, OrderSide, OrderType, OrderStatus
 from exchange_transaction import ExchangeTransaction
 from order_service import OrderService
+from order_service import OrderRejected
 
 class ExchangeService:
 
@@ -25,27 +26,54 @@ class ExchangeService:
 
     def submit_order(self, order):
         with self._lock:
-            return self.order_service.submit_order(order)
+            try:
+                with ExchangeTransaction(
+                    self.engine,
+                    self.quote_service
+                ):
+                    result = self.order_service.submit_order(order)
+                    self.engine.validate_state()
+                    return result
+
+            except OrderRejected:
+                # The transaction has already rolled back.
+                # Preserve only the rejected order's history.
+                order.set_status(OrderStatus.REJECTED)
+
+                self.engine.order_manager.register_order(order)
+
+                raise
 
     def cancel_order_by_id(self, order_id, user_id):
         with self._lock:
-            return self.order_service.cancel_order(
-                order_id,
-                user_id=user_id,
-            )
+            with ExchangeTransaction(
+                self.engine,
+                self.quote_service
+            ):
+                result = self.order_service.cancel_order(
+                    order_id,
+                    user_id
+                )
+
+                self.engine.validate_state()
+
+                return result
 
     def replace_order(self, order_id, user_id, **changes):
         with self._lock:
-
             with ExchangeTransaction(
                 self.engine,
-                self.quote_service,
+                self.quote_service
             ):
-                return self.order_service.replace_order(
+                replacement = self.order_service.replace_order(
                     order_id,
                     user_id,
                     **changes,
                 )
+
+                self.engine.validate_state()
+
+                return replacement
 
     def accept_quote(
         self,

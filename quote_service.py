@@ -19,11 +19,26 @@ class QuoteService:
         self.invalidated_quote_ids = set()
 
     def get_quote(
-        self,
-        user_id: str,
-        side: OrderSide,
-        quantity: Decimal
-    ) -> Quote:
+            self,
+            user_id: str,
+            side: OrderSide,
+            quantity: Decimal
+        ) -> Quote:
+
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("Invalid user ID.")
+
+        if not isinstance(side, OrderSide):
+            raise ValueError("Invalid quote side.")
+
+        if (
+            not isinstance(quantity, Decimal)
+            or not quantity.is_finite()
+            or quantity <= 0
+        ):
+            raise ValueError(
+                "Quote quantity must be a positive finite Decimal."
+            )
 
         fills = self.order_book.estimate_execution(
             side=side,

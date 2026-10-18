@@ -1,10 +1,13 @@
 from decimal import Decimal
 from typing import Optional
 
-from models import Order, OrderStatus, OrderType
+from models import Order, OrderSide, OrderStatus, OrderType
 from matching_engine import MatchingEngine
 from order_manager import OrderManager
 
+class OrderRejected(ValueError):
+    """Expected rejection before matching begins."""
+    pass
 
 class OrderService:
 
@@ -17,7 +20,46 @@ class OrderService:
         self.order_manager = order_manager
 
     def submit_order(self, order: Order) -> Order:
-        return self.engine.submit_order(order)
+        # 1. Register the order so its history is retained.
+        self.order_manager.register_order(order)
+
+        # 2. Validate the order and reserve funds.
+        try:
+            order.validate()
+
+            if order.symbol != self.engine.order_book.symbol:
+                raise ValueError(
+                    "Order symbol does not match this order book."
+                )
+
+            self.engine.settlement.reserve_funds(
+                order,
+                self.engine.order_book
+            )
+
+        except (ValueError, TypeError) as exc:
+            order.set_status(OrderStatus.REJECTED)
+            raise OrderRejected(str(exc)) from exc
+
+        # 3. Hand over to the matching engine.
+        self.engine.match_order(order)
+
+        # 4. Handle the unfilled remainder.
+        if order.remaining_quantity() > 0:
+
+            if order.order_type == OrderType.LIMIT:
+                self.engine.order_book.add_order(order)
+
+            elif order.order_type == OrderType.MARKET:
+                self.engine.settlement.release_market_remainder(
+                    order
+                )
+                order.set_status(OrderStatus.EXPIRED)
+
+        # 5. Validate the final stable exchange state.
+        self.engine.validate_state()
+
+        return order
 
     def get_order(self, order_id: str) -> Order:
         return self.order_manager.get_order(order_id)
@@ -113,6 +155,6 @@ class OrderService:
 
         # Submit the replacement normally.
         # This gives it a new ID and queue position.
-        self.engine.submit_order(replacement)
+        self.submit_order(replacement)
 
         return replacement
